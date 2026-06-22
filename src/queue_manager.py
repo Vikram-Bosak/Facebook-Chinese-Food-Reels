@@ -9,6 +9,7 @@ try:
     from .telegram_reporter import report_success, report_failure
     from .drive_reader import get_next_media, move_file, count_pending_media
     from .logger import logger
+    from .translator import translate_video
 except ImportError:
     from database import is_duplicate, insert_media, update_reel_metadata, mark_reel_uploaded, mark_reel_failed, get_reel_status, increment_attempts, reset_attempts
     from seo_generator import generate_seo_metadata, format_caption
@@ -16,6 +17,7 @@ except ImportError:
     from telegram_reporter import report_success, report_failure
     from drive_reader import get_next_media, move_file, count_pending_media
     from logger import logger
+    from translator import translate_video
 
 class PermanentValidationError(Exception):
     """Exception raised for errors that cannot be resolved via retries (e.g. corrupt files, duplicates)."""
@@ -120,6 +122,31 @@ def process_next_media(media_type='reel'):
         caption = format_caption(seo)
         update_reel_metadata(filename, seo['title'], seo['description'], seo['hashtags'])
         
+        # Translation: Chinese → English (if enabled)
+        upload_filepath = filepath  # Default: upload original
+        translate_enabled = os.environ.get('ENABLE_TRANSLATION', 'false').lower() == 'true'
+        
+        if translate_enabled and media_type == 'reel':
+            logger.info("Translating Chinese video to English...")
+            try:
+                output_dir = os.path.join(os.path.dirname(filepath), 'translated')
+                os.makedirs(output_dir, exist_ok=True)
+                
+                translation_result = translate_video(
+                    filepath, 
+                    output_dir=output_dir,
+                    burn_subtitles=True,
+                    subtitle_language='dual'
+                )
+                
+                if translation_result and translation_result.get('english_video'):
+                    upload_filepath = translation_result['english_video']
+                    logger.info(f"Translation successful: {upload_filepath}")
+                else:
+                    logger.warning("Translation failed, uploading original video")
+            except Exception as translate_err:
+                logger.warning(f"Translation error: {translate_err}, uploading original")
+        
         # Facebook Upload with Retries
         logger.info(f"Uploading to Facebook {media_type}s...")
         max_retries = 3
@@ -129,9 +156,9 @@ def process_next_media(media_type='reel'):
         for attempt in range(max_retries):
             try:
                 if media_type == 'reel':
-                    fb_url = upload_reel(filepath, caption, title=seo.get('title'))
+                    fb_url = upload_reel(upload_filepath, caption, title=seo.get('title'))
                 else:
-                    fb_url = upload_photo(filepath, caption)
+                    fb_url = upload_photo(upload_filepath, caption)
                 break
             except Exception as e:
                 if attempt < max_retries - 1:
@@ -186,7 +213,15 @@ def process_next_media(media_type='reel'):
             report_failure(filename, warn_msg, remaining_queue, media_type)
             
     finally:
-        # Cleanup temp file
+        # Cleanup temp files (original + translated)
+        for cleanup_path in [filepath, upload_filepath]:
+            if cleanup_path and os.path.exists(cleanup_path) and cleanup_path != filepath:
+                try:
+                    os.remove(cleanup_path)
+                    logger.info(f"Translated file cleaned up: {cleanup_path}")
+                except Exception as cleanup_err:
+                    logger.error(f"Failed to cleanup translated file: {cleanup_err}")
+        
         if os.path.exists(filepath):
             try:
                 os.remove(filepath)

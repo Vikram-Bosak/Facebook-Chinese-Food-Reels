@@ -11,3 +11,6 @@ python-telegram-bot
 Pillow
 yt-dlp
 playwright
+# Translation dependencies
+edge-tts
+openai-whisper
