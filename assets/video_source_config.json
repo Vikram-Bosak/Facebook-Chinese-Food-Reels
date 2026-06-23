@@ -1,0 +1,11 @@
+{
+  "queries": [
+    "https://www.douyin.com/search/美食",
+    "https://www.douyin.com/search/街头小吃",
+    "https://www.douyin.com/search/烹饪教程"
+  ],
+  "food_keywords": [
+    "美食", "街头小吃", "烹饪", "做菜", "食谱", "味道", "小吃", "水果", "海鲜", "烧烤", 
+    "food", "cooking", "street food", "recipe", "delicious", "seafood", "barbecue", "fruit"
+  ]
+}
