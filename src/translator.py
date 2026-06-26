@@ -361,18 +361,18 @@ def generate_segment_tts(text, voice, output_path):
         try:
             from openai import OpenAI
             client = OpenAI(api_key=api_key)
-            openai_voice = 'onyx'  # Default narrator voice
+            openai_voice = 'echo'  # Default narrator voice (warm, natural)
             voice_lower = voice.lower()
             if 'christopher' in voice_lower or 'guy' in voice_lower or 'eric' in voice_lower or 'male' in voice_lower:
-                openai_voice = 'onyx'
+                openai_voice = 'echo'   # Warm, natural male voice
             elif 'samantha' in voice_lower or 'jenny' in voice_lower or 'aria' in voice_lower or 'female' in voice_lower:
-                openai_voice = 'nova'
+                openai_voice = 'shimmer'  # Warm, expressive female voice
             elif voice in ['alloy', 'echo', 'fable', 'onyx', 'nova', 'shimmer']:
                 openai_voice = voice
             
-            # Request audio generation
+            # Request audio generation — HD model for significantly more natural output
             response = client.audio.speech.create(
-                model="tts-1",
+                model="tts-1-hd",
                 voice=openai_voice,
                 input=text
             )
@@ -400,9 +400,20 @@ def generate_segment_tts(text, voice, output_path):
             elif voice.startswith("af_") or voice.startswith("am_") or voice.startswith("bf_") or voice.startswith("bm_"):
                 kokoro_voice = voice
                 
-            samples, sample_rate = kokoro.create(text, voice=kokoro_voice, speed=1.0, lang="en-us")
+            samples, sample_rate = kokoro.create(text, voice=kokoro_voice, speed=0.95, lang="en-us")
             import soundfile as sf
             sf.write(output_path, samples, sample_rate)
+            # Post-process: apply gentle lowpass filter to soften digital artifacts
+            try:
+                temp_post = output_path + ".post.wav"
+                subprocess.run([
+                    'ffmpeg', '-y', '-i', output_path,
+                    '-af', 'lowpass=f=15000',
+                    temp_post
+                ], capture_output=True, check=True)
+                os.replace(temp_post, output_path)
+            except Exception as e:
+                logger.warning(f"Kokoro post-processing failed (using unfiltered): {e}")
             return True
     except Exception as e:
         logger.error(f"Kokoro TTS generation failed: {e}. Falling back to edge-tts.")
@@ -493,14 +504,21 @@ def generate_english_tts(segments, output_audio_path=None, video_path=None):
                 speed = actual_dur / target_dur
                 logger.info(f"Segment {idx} is too slow ({actual_dur:.2f}s > {target_dur:.2f}s). Speeding up by {speed:.2f}x")
                 
-                # Cap speed at a reasonable limit (e.g. 1.2x) to prevent robotic/unnatural audio
-                speed = min(speed, 1.2)
+                # Cap speed at 1.35x to prevent robotic/unnatural audio
+                speed = min(speed, 1.35)
                 
-                # Chain atempo filters if speed > 2.0
-                if speed > 2.0:
-                    filters = ["atempo=2.0", f"atempo={speed/2.0:.4f}"]
-                else:
+                # Use chained atempo filters for smoother, more natural speed adjustment
+                if speed <= 1.15:
+                    # Single atempo for small speed changes
                     filters = [f"atempo={speed:.4f}"]
+                elif speed <= 1.3:
+                    # Two chained atempo filters for medium speed changes
+                    step = speed ** 0.5  # sqrt for balanced chaining
+                    filters = [f"atempo={step:.4f}", f"atempo={step:.4f}"]
+                else:
+                    # Three chained atempo filters for large speed changes
+                    step = speed ** (1.0/3.0)  # cube root for balanced chaining
+                    filters = [f"atempo={step:.4f}", f"atempo={step:.4f}", f"atempo={step:.4f}"]
                 
                 temp_seg_speed = os.path.join(temp_dir, f"seg_speed_{idx}.wav")
                 try:
@@ -541,8 +559,30 @@ def generate_english_tts(segments, output_audio_path=None, video_path=None):
 
     try:
         logger.info("Mixing audio segments into final aligned audio track...")
-        subprocess.run(cmd, capture_output=True, check=True)
-        return output_audio_path
+        temp_raw_mix = os.path.join(temp_dir, "raw_mix.wav")
+        subprocess.run(cmd + [temp_raw_mix], capture_output=True, check=True)
+
+        # Step 4: Post-process the mixed audio for natural, human-like quality
+        # - lowpass: soften any remaining digital/robotic artifacts
+        # - loudnorm: normalize to professional broadcast loudness
+        # - equalizer: slight presence boost at 3kHz for vocal clarity
+        logger.info("Post-processing mixed audio for natural quality...")
+        post_filters = "lowpass=f=14000,loudnorm=I=-16:TP=-1.5:LRA=11,equalizer=f=3000:t=q:w=1:g=1"
+        try:
+            subprocess.run([
+                'ffmpeg', '-y', '-i', temp_raw_mix,
+                '-af', post_filters,
+                '-ar', '44100', '-ac', '2',
+                output_audio_path
+            ], capture_output=True, check=True)
+            logger.info("Post-processing complete. Audio should sound natural and human-like.")
+            return output_audio_path
+        except subprocess.CalledProcessError as e:
+            logger.warning(f"Post-processing failed, returning raw mix: {e}")
+            import shutil
+            shutil.copy2(temp_raw_mix, output_audio_path)
+            return output_audio_path
+
     except subprocess.CalledProcessError as e:
         logger.error(f"FFmpeg mixing failed: {e.stderr.decode('utf-8', errors='ignore')}")
         return None
