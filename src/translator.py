@@ -355,55 +355,39 @@ def get_kokoro():
     return _kokoro_instance
 
 def generate_segment_tts(text, voice, output_path):
-    """Generate a single TTS audio chunk using OpenAI TTS (preferred), Kokoro ONNX (realistic open-source), or edge-tts."""
-    api_key = os.environ.get('OPENAI_API_KEY')
-    if api_key:
-        try:
-            from openai import OpenAI
-            client = OpenAI(api_key=api_key)
-            openai_voice = 'echo'  # Default narrator voice (warm, natural)
-            voice_lower = voice.lower()
-            if 'christopher' in voice_lower or 'guy' in voice_lower or 'eric' in voice_lower or 'male' in voice_lower:
-                openai_voice = 'echo'   # Warm, natural male voice
-            elif 'samantha' in voice_lower or 'jenny' in voice_lower or 'aria' in voice_lower or 'female' in voice_lower:
-                openai_voice = 'shimmer'  # Warm, expressive female voice
-            elif voice in ['alloy', 'echo', 'fable', 'onyx', 'nova', 'shimmer']:
-                openai_voice = voice
-            
-            # Request audio generation — HD model for significantly more natural output
-            response = client.audio.speech.create(
-                model="tts-1-hd",
-                voice=openai_voice,
-                input=text
-            )
-            response.stream_to_file(output_path)
-            return True
-        except Exception as e:
-            logger.error(f"OpenAI TTS failed: {e}. Falling back.")
-    
-    # Try Kokoro ONNX
+    """Generate a single TTS audio chunk using Kokoro ONNX (free, natural, primary)
+    or edge-tts (free fallback). OpenAI TTS is optional if OPENAI_API_KEY is set.
+
+    Kokoro voices: af_sarah, af_bella, af_heart (female), bm_george (male),
+                   am_michael, bf_emma, af_nicole, af_sky (more options).
+    """
+    # === PRIMARY: Kokoro ONNX (free, natural quality) ===
     try:
         kokoro = get_kokoro()
         if kokoro:
-            kokoro_voice = "af_sarah"  # Default female
+            # Voice mapping — Kokoro has rich voice options
+            kokoro_voice = "af_heart"  # Default: most natural female voice ⭐⭐⭐⭐⭐
             voice_lower = voice.lower()
             if 'guy' in voice_lower or 'male' in voice_lower or 'christopher' in voice_lower or 'george' in voice_lower:
-                kokoro_voice = "bm_george"  # Default male
-            elif 'bella' in voice_lower:
-                kokoro_voice = "af_bella"
-            elif 'heart' in voice_lower:
-                kokoro_voice = "af_heart"
+                kokoro_voice = "bm_george"    # Warm male voice
             elif 'michael' in voice_lower:
-                kokoro_voice = "am_michael"
+                kokoro_voice = "am_michael"   # Deep male voice
+            elif 'bella' in voice_lower:
+                kokoro_voice = "af_bella"     # Soft female
+            elif 'heart' in voice_lower:
+                kokoro_voice = "af_heart"     # Expressive female
             elif 'nicole' in voice_lower or 'emma' in voice_lower:
-                kokoro_voice = "bf_emma"
+                kokoro_voice = "bf_emma"      # Clear female
+            elif 'sky' in voice_lower:
+                kokoro_voice = "af_sky"       # Youthful female
             elif voice.startswith("af_") or voice.startswith("am_") or voice.startswith("bf_") or voice.startswith("bm_"):
                 kokoro_voice = voice
-                
+
             samples, sample_rate = kokoro.create(text, voice=kokoro_voice, speed=0.95, lang="en-us")
             import soundfile as sf
             sf.write(output_path, samples, sample_rate)
-            # Post-process: apply gentle lowpass filter to soften digital artifacts
+
+            # Post-process: lowpass to soften digital artifacts
             try:
                 temp_post = output_path + ".post.wav"
                 subprocess.run([
@@ -412,20 +396,46 @@ def generate_segment_tts(text, voice, output_path):
                     temp_post
                 ], capture_output=True, check=True)
                 os.replace(temp_post, output_path)
-            except Exception as e:
-                logger.warning(f"Kokoro post-processing failed (using unfiltered): {e}")
+            except Exception:
+                pass  # Use unfiltered if post-process fails
+
             return True
     except Exception as e:
-        logger.error(f"Kokoro TTS generation failed: {e}. Falling back to edge-tts.")
-        
-    # Fallback to edge-tts
+        logger.error(f"Kokoro TTS failed: {e}. Trying fallback...")
+
+    # === FALLBACK 1: OpenAI TTS (only if API key is available) ===
+    api_key = os.environ.get('OPENAI_API_KEY')
+    if api_key:
+        try:
+            from openai import OpenAI
+            client = OpenAI(api_key=api_key)
+            openai_voice = 'echo'  # Warm, natural male
+            voice_lower = voice.lower()
+            if 'christopher' in voice_lower or 'guy' in voice_lower or 'eric' in voice_lower or 'male' in voice_lower:
+                openai_voice = 'echo'
+            elif 'samantha' in voice_lower or 'jenny' in voice_lower or 'aria' in voice_lower or 'female' in voice_lower:
+                openai_voice = 'shimmer'
+            elif voice in ['alloy', 'echo', 'fable', 'onyx', 'nova', 'shimmer']:
+                openai_voice = voice
+
+            response = client.audio.speech.create(
+                model="tts-1-hd",
+                voice=openai_voice,
+                input=text
+            )
+            response.stream_to_file(output_path)
+            return True
+        except Exception as e:
+            logger.error(f"OpenAI TTS failed: {e}.")
+
+    # === FALLBACK 2: edge-tts (free, last resort) ===
     try:
         import edge_tts
         import asyncio
         asyncio.run(edge_tts.Communicate(text, voice).save(output_path))
         return True
     except Exception as e:
-        logger.error(f"Fallback edge-tts failed for text '{text}': {e}")
+        logger.error(f"edge-tts failed for text '{text}': {e}")
         return False
 
 def generate_english_tts(segments, output_audio_path=None, video_path=None):
@@ -480,6 +490,21 @@ def generate_english_tts(segments, output_audio_path=None, video_path=None):
     inputs = ['-i', silent_base]
     filter_complex_parts = []
     
+    # Create a short silence file for natural breathing pauses between segments
+    silence_pad_path = os.path.join(temp_dir, "silence_pad_150ms.wav")
+    try:
+        subprocess.run([
+            'ffmpeg', '-y', '-f', 'lavfi',
+            '-i', 'anullsrc=r=44100:cl=stereo',
+            '-t', '0.15',
+            silence_pad_path
+        ], capture_output=True, check=True)
+    except Exception as e:
+        logger.warning(f"Failed to create silence pad: {e}")
+        silence_pad_path = None
+
+    prev_seg_end = 0.0  # Track the end time of the previous segment
+
     for idx, seg in enumerate(segments):
         text = seg.get('english', '').strip()
         if not text:
@@ -530,6 +555,30 @@ def generate_english_tts(segments, output_audio_path=None, video_path=None):
                     temp_seg_final = temp_seg_speed
                 except Exception as e:
                     logger.error(f"Failed to speed up segment {idx}: {e}")
+
+            # Add natural silence gap if there's a gap between segments
+            # This creates breathing pauses that make the dubbing sound more human
+            gap = start - prev_seg_end
+            if gap > 0.1 and silence_pad_path and os.path.exists(silence_pad_path):
+                # Calculate silence duration: 50-150ms based on gap size
+                silence_dur = min(0.15, max(0.05, gap * 0.3))
+                temp_seg_padded = os.path.join(temp_dir, f"seg_padded_{idx}.wav")
+                try:
+                    subprocess.run([
+                        'ffmpeg', '-y',
+                        '-i', silence_pad_path,
+                        '-i', temp_seg_final,
+                        '-filter_complex',
+                        f'[0:a]atrim=0:{silence_dur:.3f},apad[sil];[sil][1:a]concat=n=2:v=0:a=1[out]',
+                        '-map', '[out]',
+                        temp_seg_padded
+                    ], capture_output=True, check=True)
+                    temp_seg_final = temp_seg_padded
+                except Exception as e:
+                    logger.warning(f"Failed to add silence gap for segment {idx}: {e}")
+
+            # Update the end time of the previous segment
+            prev_seg_end = end
 
             # Add to input list and prepare adelay filter
             input_idx = len(inputs) // 2  # This corresponds to the input index of this file in FFmpeg
