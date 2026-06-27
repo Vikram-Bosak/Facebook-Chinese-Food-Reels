@@ -92,7 +92,7 @@ def main():
                 sys.exit(1)
             
             print("\n" + "="*50)
-            print("🎉 VERIFICATION PASSED: Video dubbing & alignment completed successfully!")
+            print("[SUCCESS] VERIFICATION PASSED: Video dubbing & alignment completed successfully!")
             print(f"Final English Video: {final_vid}")
             print(f"Subtitles: {result['subtitles']}")
             print("="*50 + "\n")

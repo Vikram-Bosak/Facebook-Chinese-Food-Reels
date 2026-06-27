@@ -346,23 +346,14 @@ def edit_video(input_vid_path, overlay_img_path, output_vid_path):
         # Then overlay the transparent Pillow image (text) on top
         final = ffmpeg.overlay(vid_on_base, overlay, x=0, y=0)
 
-        # Output with audio (limited to 58 seconds for Reels)
-        out = ffmpeg.output(final, vid.audio, output_vid_path, vcodec='libx264', acodec='aac', t=58, shortest=None, crf=28, preset='fast')
+        # Output with audio (no duration trim limit)
+        out = ffmpeg.output(final, vid.audio, output_vid_path, vcodec='libx264', acodec='aac', crf=28, preset='fast')
 
         ffmpeg.run(out, overwrite_output=True, quiet=True)
         print("Video editing completed.")
 
         duration = get_video_duration(output_vid_path)
         print(f"Final video duration: {duration:.2f} seconds")
-
-        if duration < 20:
-            print("Validation Failed: Video is under 20 seconds.")
-            if os.path.exists(output_vid_path): os.remove(output_vid_path)
-            return False
-        if duration > 59:
-            print("Validation Failed: Video is over 59 seconds.")
-            if os.path.exists(output_vid_path): os.remove(output_vid_path)
-            return False
 
         return True
     except Exception as e:

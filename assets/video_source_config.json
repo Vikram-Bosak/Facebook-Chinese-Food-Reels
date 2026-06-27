@@ -1,11 +1,13 @@
 {
   "queries": [
-    "https://www.douyin.com/search/美食",
-    "https://www.douyin.com/search/街头小吃",
-    "https://www.douyin.com/search/烹饪教程"
+    "https://www.douyin.com/jingxuan",
+    "https://www.kuaishou.com/new-reco",
+    "https://www.bilibili.com/"
   ],
   "food_keywords": [
-    "美食", "街头小吃", "烹饪", "做菜", "食谱", "味道", "小吃", "水果", "海鲜", "烧烤", 
-    "food", "cooking", "street food", "recipe", "delicious", "seafood", "barbecue", "fruit"
+    "测评", "试吃", "吃播", "点评", "体验", "口味",
+    "挑战", "比赛", "大胃王", "pk",
+    "教程", "配方", "做法", "步骤", "做菜", "烹饪", "食谱",
+    "food review", "food tasting", "mukbang", "food challenge", "recipe", "cooking tutorial"
   ]
 }

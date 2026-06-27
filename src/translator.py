@@ -880,16 +880,16 @@ def burn_subtitles_into_video(video_path, srt_path, output_path=None, language='
         template_path = os.path.join(base_dir, 'assets', 'template_3_4.jpg')
         is_templated = os.path.exists(template_path) or os.path.exists('assets/template_3_4.jpg')
         
-        margin_v = "80" if is_templated else "60"
-        margin_v_dual = "70" if is_templated else "50"
+        margin_v = "30" if is_templated else "20"
+        margin_v_dual = "25" if is_templated else "15"
 
         # Subtitle style based on language
         if language == 'chinese':
-            style = f"FontName=Noto Sans SC,FontSize=22,PrimaryColour=&H00FFFFFF,OutlineColour=&H00000000,Outline=2,Shadow=1,Alignment=2,MarginV={margin_v}"
+            style = f"FontName=Noto Sans SC,FontSize=16,PrimaryColour=&H00FFFFFF,OutlineColour=&H00000000,Outline=2,Shadow=1,Alignment=2,MarginV={margin_v}"
         elif language == 'dual':
-            style = f"FontName=Noto Sans SC,FontSize=18,PrimaryColour=&H00FFFFFF,OutlineColour=&H00000000,Outline=2,Shadow=1,Alignment=2,MarginV={margin_v_dual}"
+            style = f"FontName=Noto Sans SC,FontSize=13,PrimaryColour=&H00FFFFFF,OutlineColour=&H00000000,Outline=2,Shadow=1,Alignment=2,MarginV={margin_v_dual}"
         else:  # english
-            style = f"FontName=Arial,FontSize=16,PrimaryColour=&H00FFFFFF,OutlineColour=&H00000000,Outline=2,Shadow=1,Alignment=2,MarginV={margin_v}"
+            style = f"FontName=Arial,FontSize=12,PrimaryColour=&H00FFFFFF,OutlineColour=&H00000000,Outline=2,Shadow=1,Alignment=2,MarginV={margin_v}"
 
         # Escape path for FFmpeg subtitle filter
         escaped_srt = srt_path.replace('\\', '/').replace(':', '\\:')
@@ -918,43 +918,8 @@ def burn_subtitles_into_video(video_path, srt_path, output_path=None, language='
 
 
 def trim_video_to_59s(video_path, output_dir):
-    """Trims video to 59 seconds if it is longer."""
-    try:
-        # Check duration using ffprobe
-        cmd = [
-            'ffprobe', '-v', 'error',
-            '-show_entries', 'format=duration',
-            '-of', 'csv=p=0',
-            video_path
-        ]
-        res = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
-        duration = float(res.stdout.strip())
-        
-        if duration > 59.0:
-            logger.info(f"Video is {duration:.2f}s long. Trimming to 59s...")
-            base = os.path.basename(video_path)
-            trimmed_path = os.path.join(output_dir, f"trimmed_59s_{base}")
-            
-            # Trim using ffmpeg (re-encode to avoid keyframe issues)
-            trim_cmd = [
-                'ffmpeg', '-y',
-                '-i', video_path,
-                '-ss', '0',
-                '-t', '59',
-                '-c:v', 'libx264',
-                '-c:a', 'aac',
-                '-crf', '18',
-                trimmed_path
-            ]
-            subprocess.run(trim_cmd, capture_output=True, check=True, timeout=300)
-            logger.info(f"Video trimmed successfully: {trimmed_path}")
-            return trimmed_path
-        else:
-            logger.info(f"Video is {duration:.2f}s long. No trimming needed.")
-            return video_path
-    except Exception as e:
-        logger.error(f"Error trimming video: {e}")
-        return video_path
+    """Bypassed: Returns the video path directly without trimming."""
+    return video_path
 
 
 # ============================================================

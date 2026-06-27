@@ -1,8 +1,14 @@
 import os
 import json
 import asyncio
-from playwright.async_api import async_playwright
+import sys
 from dotenv import load_dotenv
+
+# Prevent encoding crashes when printing Chinese characters to standard output
+try:
+    sys.stdout.reconfigure(encoding='utf-8')
+except Exception:
+    pass
 
 load_dotenv()
 HISTORY_FILE = 'downloaded_history.txt'
@@ -33,71 +39,198 @@ def save_queue(queue):
         json.dump(queue, f, indent=2)
 
 async def scan_douyin_food_videos():
-    print("Scanning Douyin Food section for new videos...")
+    print("Scanning Douyin, Kuaishou, and Bilibili Food sections...")
     history = load_history()
     queue = load_queue()
     queued_ids = {item['id'] for item in queue}
+    new_candidates = []
     
-    # Target URL for food videos
-    target_url = "https://www.douyin.com/jingxuan/food"
+    # 1. Robust Bilibili API Fallback (Does not require Playwright)
+    import urllib.parse
+    import requests
+    import re
     
-    async with async_playwright() as p:
-        browser = await p.chromium.launch(headless=True)
-        context = await browser.new_context(
-            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-            viewport={'width': 1280, 'height': 800}
-        )
-        page = await context.new_page()
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Referer": "https://www.bilibili.com/"
+    }
+    
+    bilibili_kws = ["美食测评", "美食挑战", "做菜教程"]
+    for kw in bilibili_kws:
         try:
-            await page.goto(target_url, wait_until="domcontentloaded", timeout=60000)
-            await page.wait_for_timeout(5000)
+            url = f"https://api.bilibili.com/x/web-interface/wbi/search/all/v2?keyword={urllib.parse.quote(kw)}"
+            r = requests.get(url, headers=headers, timeout=10)
+            if r.status_code == 200:
+                data = r.json()
+                if data.get('code') == 0:
+                    result = data.get('data', {}).get('result', [])
+                    video_result = None
+                    if isinstance(result, list):
+                        for item in result:
+                            if isinstance(item, dict) and item.get('result_type') == 'video':
+                                video_result = item
+                                break
+                    elif isinstance(result, dict):
+                        video_result = result.get('video')
+                        
+                    if video_result:
+                        data_list = video_result.get('data', [])
+                        for v in data_list:
+                            bvid = v.get('bvid')
+                            if not bvid:
+                                continue
+                            if bvid in history or bvid in queued_ids:
+                                continue
+                            
+                            title_clean = re.sub(r'<[^>]+>', '', v.get('title', ''))
+                            video_url = f"https://www.bilibili.com/video/{bvid}"
+                            new_candidates.append({
+                                "id": bvid,
+                                "title": title_clean[:120],
+                                "source_url": video_url,
+                                "status": "PENDING"
+                            })
+                            print(f"Discovered Bilibili food video: ID={bvid} | Title={title_clean[:50]}")
+        except Exception as e:
+            print(f"Error scanning Bilibili API: {e}")
+
+    # 2. Playwright Scraper for Douyin, Kuaishou, and Bilibili (runs on GitHub Actions or policy-free environments)
+    try:
+        from playwright.async_api import async_playwright
+        
+        target_urls = [
+            "https://www.douyin.com/jingxuan",
+            "https://www.kuaishou.com/new-reco",
+            "https://www.bilibili.com/"
+        ]
+        
+        async with async_playwright() as p:
+            browser = await p.chromium.launch(headless=True)
+            context = await browser.new_context(
+                user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                viewport={'width': 1280, 'height': 800}
+            )
+            page = await context.new_page()
             
-            # Extract cards with data-aweme-id
-            cards = await page.query_selector_all('[data-aweme-id]')
-            print(f"Found {len(cards)} video cards on the page.")
+            for target_url in target_urls:
+                try:
+                    print(f"Playwright scraping: {target_url}")
+                    await page.goto(target_url, wait_until="domcontentloaded", timeout=60000)
+                    await page.wait_for_timeout(5000)
+                    
+                    # Douyin / Kuaishou card extraction
+                    if "douyin.com" in target_url:
+                        cards = await page.query_selector_all('[data-aweme-id]')
+                        for card in cards:
+                            aweme_id = await card.get_attribute('data-aweme-id')
+                            if aweme_id and aweme_id not in history and aweme_id not in queued_ids:
+                                text = await card.inner_text()
+                                text_cleaned = ' '.join(text.split())
+                                keywords = ["测评", "试吃", "吃播", "评价", "点评", "体验", "口味", "挑战", "比赛", "大胃王", "pk", "教程", "配方", "做法", "步骤", "做菜", "烹饪", "食谱"]
+                                if any(kw in text_cleaned for kw in keywords):
+                                    new_candidates.append({
+                                        "id": aweme_id,
+                                        "title": text_cleaned[:120],
+                                        "source_url": f"https://www.douyin.com/video/{aweme_id}",
+                                        "status": "PENDING"
+                                    })
+                                    print(f"Discovered Douyin video: ID={aweme_id} | Title={text_cleaned[:50]}")
+                                    
+                    elif "kuaishou.com" in target_url:
+                        # Extract links containing short-video or Kwai video patterns
+                        links = await page.query_selector_all('a')
+                        for link in links:
+                            href = await link.get_attribute('href')
+                            if href and ('/short-video/' in href or '/video/' in href or '/f/' in href):
+                                vid = href.split('/')[-1].split('?')[0]
+                                if vid and vid not in history and vid not in queued_ids:
+                                    text = await link.inner_text()
+                                    text_cleaned = ' '.join(text.split())
+                                    new_candidates.append({
+                                        "id": vid,
+                                        "title": text_cleaned[:120] if text_cleaned else f"Kuaishou Video {vid}",
+                                        "source_url": f"https://www.kuaishou.com/short-video/{vid}" if not href.startswith('http') else href,
+                                        "status": "PENDING"
+                                    })
+                                    print(f"Discovered Kuaishou video: ID={vid}")
+                                    
+                except Exception as e:
+                    print(f"Error scraping {target_url} with Playwright: {e}")
+            await browser.close()
             
-            new_candidates = []
-            for card in cards:
-                aweme_id = await card.get_attribute('data-aweme-id')
-                if not aweme_id:
-                    continue
-                    
-                if aweme_id in history or aweme_id in queued_ids:
-                    continue
-                    
-                text = await card.inner_text()
-                text_cleaned = ' '.join(text.split())
+    except Exception as err:
+        print(f"Playwright scraper skipped/failed: {err}")
+
+    # Save unique new candidates to queue
+    if new_candidates:
+        unique_candidates = []
+        seen_ids = set(queued_ids)
+        for c in new_candidates:
+            if c['id'] not in seen_ids:
+                unique_candidates.append(c)
+                seen_ids.add(c['id'])
                 
-                # Check for food related keywords
-                keywords = ["美食", "小吃", "烹饪", "做菜", "食谱", "味道", "烧烤", "海鲜", "水果", "夜市", "葱花饼", "牛肋排"]
-                is_food = any(kw in text_cleaned for kw in keywords)
-                
-                if is_food:
-                    video_url = f"https://www.douyin.com/video/{aweme_id}"
+        if unique_candidates:
+            queue.extend(unique_candidates)
+            save_queue(queue)
+            print(f"Added {len(unique_candidates)} new videos to the queue.")
+        else:
+            print("No new unique food videos discovered in this scan.")
+    else:
+        print("No new unique food videos discovered in this scan.")
+
+def scan_rss_feed():
+    print("Reading local RSS feed...")
+    FEED_FILE = 'workspace/reels_feed.xml'
+    if not os.path.exists(FEED_FILE):
+        print(f"Local RSS feed not found at {FEED_FILE}. Please run rss_generator.py first.")
+        return
+        
+    try:
+        import xml.etree.ElementTree as ET
+        history = load_history()
+        queue = load_queue()
+        queued_ids = {item['id'] for item in queue}
+        
+        tree = ET.parse(FEED_FILE)
+        root = tree.getroot()
+        
+        new_candidates = []
+        for item in root.findall('.//item'):
+            title_node = item.find('title')
+            link_node = item.find('link')
+            guid_node = item.find('guid')
+            
+            if title_node is not None and link_node is not None and guid_node is not None:
+                vid = guid_node.text
+                if vid not in history and vid not in queued_ids:
                     new_candidates.append({
-                        "id": aweme_id,
-                        "title": text_cleaned[:120],
-                        "source_url": video_url,
+                        "id": vid,
+                        "title": title_node.text,
+                        "source_url": link_node.text,
                         "status": "PENDING"
                     })
-                    print(f"Discovered new food video: ID={aweme_id} | Title={text_cleaned[:50]}")
-            
-            if new_candidates:
-                # Add to queue
-                queue.extend(new_candidates)
-                save_queue(queue)
-                print(f"Added {len(new_candidates)} new videos to the queue.")
-            else:
-                print("No new unique food videos discovered in this scan.")
-                
-        except Exception as e:
-            print(f"Error scanning Douyin: {e}")
-        finally:
-            await browser.close()
+                    print(f"RSS Feed Match: ID={vid} | Title={title_node.text[:50]}")
+                    
+        if new_candidates:
+            queue.extend(new_candidates)
+            save_queue(queue)
+            print(f"Added {len(new_candidates)} new videos from RSS feed to the queue.")
+        else:
+            print("No new unique videos found in the RSS feed.")
+    except Exception as e:
+        print(f"Error parsing local RSS feed: {e}")
 
 def run_downloader():
     print("Running Downloader: Scanning and filling queue...")
-    asyncio.run(scan_douyin_food_videos())
+    # First parse from RSS feed if available
+    scan_rss_feed()
+    
+    # Also attempt standard scraper scan in background
+    try:
+        asyncio.run(scan_douyin_food_videos())
+    except Exception:
+        pass
     
     # Return the first PENDING video in the queue if available
     queue = load_queue()

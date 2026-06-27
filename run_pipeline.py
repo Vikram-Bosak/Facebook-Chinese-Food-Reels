@@ -3,7 +3,9 @@ import sys
 import shutil
 import asyncio
 import requests
-from playwright.async_api import async_playwright
+import ffmpeg
+import yt_dlp
+import re
 
 # Add src to python path
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), 'src')))
@@ -11,7 +13,62 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), 'src'
 from logger import logger
 from translator import translate_video
 
+def download_bilibili_direct(url, output_path):
+    logger.info(f"Attempting direct Bilibili API download for: {url}")
+    try:
+        match = re.search(r'video/(BV[a-zA-Z0-9]+)', url)
+        if not match:
+            logger.error("Could not parse BVID from Bilibili URL.")
+            return False
+        bvid = match.group(1)
+        
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "Referer": "https://www.bilibili.com/"
+        }
+        
+        # 1. Get cid
+        view_url = f"https://api.bilibili.com/x/web-interface/view?bvid={bvid}"
+        r = requests.get(view_url, headers=headers, timeout=15)
+        data = r.json()
+        if data.get('code') != 0:
+            logger.error(f"Error getting Bilibili view info: {data.get('message')}")
+            return False
+            
+        cid = data['data']['cid']
+        
+        # 2. Get playurl
+        playurl_api = f"https://api.bilibili.com/x/player/playurl?bvid={bvid}&cid={cid}&qn=16&type=&otype=json"
+        r2 = requests.get(playurl_api, headers=headers, timeout=15)
+        data2 = r2.json()
+        if data2.get('code') != 0:
+            logger.error(f"Error getting Bilibili play URL: {data2.get('message')}")
+            return False
+            
+        durl = data2['data']['durl']
+        video_url = durl[0]['url']
+        
+        # 3. Direct download (non-streaming for smaller files prevents IncompleteRead errors)
+        if os.path.exists(output_path):
+            os.remove(output_path)
+            
+        logger.info("Downloading Bilibili MP4...")
+        r3 = requests.get(video_url, headers=headers, timeout=60)
+        r3.raise_for_status()
+        
+        with open(output_path, 'wb') as f:
+            f.write(r3.content)
+            
+        if os.path.exists(output_path) and os.path.getsize(output_path) > 1000:
+            logger.info("Direct Bilibili download completed successfully.")
+            return True
+        return False
+    except Exception as e:
+        logger.error(f"Direct Bilibili download failed: {e}")
+        return False
+
 async def extract_douyin_video_url(page_url):
+    from playwright.async_api import async_playwright
     logger.info(f"Opening browser with mobile user agent to extract video URL from: {page_url}")
     async with async_playwright() as p:
         # Emulate iPhone
@@ -94,6 +151,28 @@ def download_video_direct(video_url, output_path):
         logger.error(f"Error downloading video: {e}")
         return False
 
+def download_with_ytdlp(url, output_path):
+    logger.info(f"Downloading via yt-dlp: {url}")
+    try:
+        if os.path.exists(output_path):
+            os.remove(output_path)
+        ydl_opts = {
+            'outtmpl': output_path,
+            'format': 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best',
+            'merge_output_format': 'mp4',
+            'quiet': True,
+            'no_warnings': True,
+        }
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            ydl.download([url])
+        if os.path.exists(output_path) and os.path.getsize(output_path) > 1000:
+            logger.info("Downloaded successfully via yt-dlp")
+            return True
+        return False
+    except Exception as e:
+        logger.error(f"yt-dlp download failed: {e}")
+        return False
+
 def main():
     if len(sys.argv) < 2:
         print("Usage: python run_pipeline.py <video_url>")
@@ -104,11 +183,24 @@ def main():
     os.makedirs(workspace_dir, exist_ok=True)
     
     raw_video = os.path.join(workspace_dir, "raw_video.mp4")
-    
-    # Check if video already downloaded to skip download step
-    if os.path.exists(raw_video) and os.path.getsize(raw_video) > 1000000:
-        logger.info(f"Using already downloaded video at: {raw_video}")
-    else:
+    if os.path.exists(raw_video):
+        try:
+            os.remove(raw_video)
+        except Exception:
+            pass
+            
+    # Download fresh video
+    download_success = False
+    if "bilibili.com" in url or "b23.tv" in url:
+        download_success = download_bilibili_direct(url, raw_video)
+        
+    if not download_success:
+        # Try yt-dlp first (it doesn't need Playwright/browsers and is policy-safe)
+        logger.info("Attempting download using yt-dlp...")
+        download_success = download_with_ytdlp(url, raw_video)
+        
+    if not download_success:
+        logger.warning("yt-dlp failed, falling back to Playwright...")
         # 1. Extract URL via Playwright
         video_url = asyncio.run(extract_douyin_video_url(url))
         if not video_url:
@@ -119,6 +211,36 @@ def main():
         if not download_video_direct(video_url, raw_video):
             logger.error("Failed to download video file. Exiting.")
             sys.exit(1)
+            
+    # Validate downloaded video duration and aspect ratio
+    logger.info("Validating downloaded video constraints...")
+    try:
+        probe = ffmpeg.probe(raw_video)
+        video_stream = next((stream for stream in probe['streams'] if stream['codec_type'] == 'video'), None)
+        if not video_stream:
+            logger.error("Validation Failed: No video stream found.")
+            if os.path.exists(raw_video):
+                os.remove(raw_video)
+            sys.exit(12)
+            
+        duration = float(probe['format'].get('duration', video_stream.get('duration', 0)))
+        width = int(video_stream.get('width', 0))
+        height = int(video_stream.get('height', 0))
+        
+        logger.info(f"Downloaded video stats: Duration = {duration}s, Dimensions = {width}x{height}")
+        
+        if width > height:
+            logger.error(f"Validation Failed: Video is horizontal ({width}x{height}, must be vertical).")
+            if os.path.exists(raw_video):
+                os.remove(raw_video)
+            sys.exit(12)
+            
+        logger.info("Video validation passed successfully.")
+    except Exception as e:
+        logger.error(f"Error during video validation: {e}")
+        if os.path.exists(raw_video):
+            os.remove(raw_video)
+        sys.exit(12)
         
     # 3. Run translation pipeline
     logger.info("Starting translation & editing pipeline...")
@@ -134,7 +256,7 @@ def main():
         shutil.copy2(result['english_video'], final_output)
         
         print("\n" + "="*50)
-        print("🎉 SUCCESS: Chinese video downloaded, translated, and edited successfully!")
+        print("SUCCESS: Chinese video downloaded, translated, and edited successfully!")
         print(f"Final English Video: {os.path.abspath(final_output)}")
         print(f"Subtitles: {result['subtitles']}")
         print("="*50 + "\n")

@@ -56,11 +56,6 @@ def validate_media(filepath, media_type='reel'):
         if not video_stream:
             return False, "No video stream found"
             
-        # Check duration
-        duration = float(video_stream.get('duration', 0))
-        if duration > 60.5:
-            return False, f"Video too long: {duration} seconds (Max 60s)"
-            
         # Check orientation
         width = int(video_stream.get('width', 0))
         height = int(video_stream.get('height', 0))
