@@ -1,4 +1,4 @@
-name: Hollywood Reels Automated Pipeline
+name: Chinese Food Reels Pipeline
 
 on:
   push:
@@ -12,13 +12,13 @@ on:
 
 jobs:
   run-pipeline:
-    name: End-to-End Hollywood Pipeline
+    name: Chinese Food Pipeline
     runs-on: ubuntu-latest
     permissions:
       contents: write
     # Optional: Prevent concurrent runs of the workflow
     concurrency:
-      group: hollywood-pipeline
+      group: chinese-food-pipeline
       cancel-in-progress: false
 
     steps:
@@ -41,7 +41,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y ffmpeg
 
-      - name: 🚀 Step 1 - Run Hollywood Pipeline Orchestrator (main_agent.py)
+      - name: 🚀 Run Chinese Food Pipeline
         id: main_agent
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
