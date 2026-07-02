@@ -239,6 +239,80 @@ def run_downloader():
         # Return first pending item metadata
         item = pending[0]
         print(f"Next pending video: {item['title']} ({item['source_url']})")
+        
+        # Add local_path for the editor
+        item['local_path'] = "workspace/raw_video.mp4"
+        item['original_file'] = f"{item['id']}.mp4"
+        
+        # Download the video if not already downloaded
+        import yt_dlp
+        import requests
+        import re
+        
+        workspace_dir = "workspace"
+        os.makedirs(workspace_dir, exist_ok=True)
+        raw_video = os.path.join(workspace_dir, "raw_video.mp4")
+        
+        if not os.path.exists(raw_video) or os.path.getsize(raw_video) < 1000:
+            print(f"Downloading video: {item['source_url']}")
+            
+            # Try Bilibili direct download first
+            download_success = False
+            if "bilibili.com" in item['source_url'] or "b23.tv" in item['source_url']:
+                match = re.search(r'video/(BV[a-zA-Z0-9]+)', item['source_url'])
+                if match:
+                    bvid = match.group(1)
+                    try:
+                        headers = {
+                            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+                            "Referer": "https://www.bilibili.com/"
+                        }
+                        view_url = f"https://api.bilibili.com/x/web-interface/view?bvid={bvid}"
+                        r = requests.get(view_url, headers=headers, timeout=15)
+                        data = r.json()
+                        if data.get('code') == 0:
+                            cid = data['data']['cid']
+                            playurl_api = f"https://api.bilibili.com/x/player/playurl?bvid={bvid}&cid={cid}&qn=16&type=&otype=json"
+                            r2 = requests.get(playurl_api, headers=headers, timeout=15)
+                            data2 = r2.json()
+                            if data2.get('code') == 0:
+                                video_url = data2['data']['durl'][0]['url']
+                                r3 = requests.get(video_url, headers=headers, timeout=60)
+                                r3.raise_for_status()
+                                with open(raw_video, 'wb') as f:
+                                    f.write(r3.content)
+                                if os.path.exists(raw_video) and os.path.getsize(raw_video) > 1000:
+                                    download_success = True
+                                    print(f"Bilibili download successful: {raw_video}")
+                    except Exception as e:
+                        print(f"Bilibili direct download failed: {e}")
+            
+            # Fallback to yt-dlp
+            if not download_success:
+                try:
+                    ydl_opts = {
+                        'outtmpl': raw_video,
+                        'format': 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best',
+                        'merge_output_format': 'mp4',
+                        'quiet': True,
+                        'no_warnings': True,
+                    }
+                    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                        ydl.download([item['source_url']])
+                    if os.path.exists(raw_video) and os.path.getsize(raw_video) > 1000:
+                        download_success = True
+                        print(f"yt-dlp download successful: {raw_video}")
+                except Exception as e:
+                    print(f"yt-dlp download failed: {e}")
+            
+            if not download_success:
+                print(f"Failed to download video: {item['source_url']}")
+                return None
+        
+        # Mark as processing in queue
+        item['status'] = 'PROCESSING'
+        save_queue(queue)
+        
         return item
     return None
 
