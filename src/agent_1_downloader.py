@@ -309,6 +309,45 @@ def run_downloader():
                 print(f"yt-dlp download failed: {e}")
         
         if not download_success:
+            print(f"Failed to download video from Bilibili: {item['source_url']}")
+            # Try YouTube as fallback
+            print("Trying YouTube as fallback...")
+            try:
+                ydl_opts = {
+                    'outtmpl': raw_video,
+                    'format': 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best',
+                    'merge_output_format': 'mp4',
+                    'quiet': True,
+                    'no_warnings': True,
+                }
+                # If source is Bilibili, search YouTube for similar content
+                if "bilibili.com" in item['source_url']:
+                    search_query = "chinese food cooking short"
+                    with yt_dlp.YoutubeDL({'quiet': True, 'no_warnings': True, 'extract_flat': True}) as ydl:
+                        result = ydl.extract_info(f'ytsearch3:{search_query}', download=False)
+                        if result and 'entries' in result:
+                            for entry in result['entries']:
+                                yt_url = f"https://www.youtube.com/watch?v={entry['id']}"
+                                try:
+                                    with yt_dlp.YoutubeDL(ydl_opts) as ydl2:
+                                        ydl2.download([yt_url])
+                                    if os.path.exists(raw_video) and os.path.getsize(raw_video) > 1000:
+                                        download_success = True
+                                        item['source_url'] = yt_url
+                                        print(f"YouTube download successful: {raw_video}")
+                                        break
+                                except Exception as e2:
+                                    print(f"YouTube download failed for {yt_url}: {e2}")
+                else:
+                    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                        ydl.download([item['source_url']])
+                    if os.path.exists(raw_video) and os.path.getsize(raw_video) > 1000:
+                        download_success = True
+                        print(f"yt-dlp download successful: {raw_video}")
+            except Exception as e:
+                print(f"YouTube fallback failed: {e}")
+        
+        if not download_success:
             print(f"Failed to download video: {item['source_url']}")
             return None
         
