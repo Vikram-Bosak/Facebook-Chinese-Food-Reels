@@ -60,6 +60,23 @@ def _handle_api_error(response, step_name):
                 raise
         response.raise_for_status()
 
+def refresh_token():
+    """
+    Refreshes the Facebook Page Access Token by querying /me/accounts.
+    Updates the environment variable FB_ACCESS_TOKEN with the resolved Page token.
+    """
+    user_token, page_id = get_fb_credentials()
+    if not user_token or not page_id:
+        logger.warning("Cannot refresh token: FB_ACCESS_TOKEN or FB_PAGE_ID missing.")
+        return
+
+    page_token = get_page_access_token(user_token, page_id)
+    if page_token and page_token != user_token:
+        os.environ['FB_ACCESS_TOKEN'] = page_token
+        logger.info(f"Facebook token refreshed for Page ID: {page_id}")
+    else:
+        logger.info("Facebook token is already a Page token or refresh returned same token.")
+
 def upload_reel(video_path, caption, title=None):
     """
     Uploads a video to Facebook Reels using the multi-step Graph API process.

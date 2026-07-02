@@ -1,9 +1,9 @@
-name: Hollywood Reels Automated Pipeline
+name: Chinese Food Reels Pipeline
 
 on:
   push:
     branches:
-      - main
+      - master
   schedule:
     # Trigger 6 times a day (every 4 hours)
     # UTC Equivalent: 00:00, 04:00, 08:00, 12:00, 16:00, 20:00
@@ -12,13 +12,12 @@ on:
 
 jobs:
   run-pipeline:
-    name: End-to-End Hollywood Pipeline
+    name: Chinese Food Reels Pipeline
     runs-on: ubuntu-latest
     permissions:
       contents: write
-    # Optional: Prevent concurrent runs of the workflow
     concurrency:
-      group: hollywood-pipeline
+      group: chinese-food-pipeline
       cancel-in-progress: false
 
     steps:
@@ -41,25 +40,25 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y ffmpeg
 
-      - name: 🚀 Step 1 - Run Hollywood Pipeline Orchestrator (main_agent.py)
+      - name: 🚀 Run Pipeline
         id: main_agent
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN_3 }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           FB_ACCESS_TOKEN: ${{ secrets.FB_ACCESS_TOKEN }}
           FB_PAGE_ID: ${{ secrets.FB_PAGE_ID }}
           YOUTUBE_TOKEN_JSON: ${{ secrets.YOUTUBE_TOKEN_JSON }}
         run: |
-          echo "Starting Main Agent..."
+          echo "Starting Chinese Food Reels Pipeline..."
           python main_agent.py
 
-      - name: 💾 Commit updated files (like history and archive)
+      - name: 💾 Commit updated files
         if: always()
         run: |
           git config --global user.name 'github-actions[bot]'
           git config --global user.email 'github-actions[bot]@users.noreply.github.com'
           git add downloaded_history.txt || true
           git commit -m "Update download history" || true
-          git pull --rebase origin main || true
-          git push origin main || true
+          git pull --rebase origin master || true
+          git push origin master || true
