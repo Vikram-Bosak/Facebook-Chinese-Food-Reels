@@ -123,10 +123,17 @@ async def extract_douyin_video_url(page_url):
             logger.error("Could not find video element source.")
             return None
 
-def download_video_direct(video_url, output_path):
+def download_video_direct(video_url, output_path, referer=None):
     logger.info(f"Downloading video from CDN: {video_url}")
+    
+    if not referer:
+        if "bilibili" in video_url or "akamaized" in video_url or "hdslb" in video_url:
+            referer = "https://www.bilibili.com/"
+        else:
+            referer = "https://www.douyin.com/"
+            
     headers = {
-        "Referer": "https://www.douyin.com/",
+        "Referer": referer,
         "User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 16_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.6 Mobile/15E148 Safari/604.1"
     }
     try:
@@ -208,7 +215,7 @@ def main():
             sys.exit(1)
             
         # 2. Download video
-        if not download_video_direct(video_url, raw_video):
+        if not download_video_direct(video_url, raw_video, referer=url):
             logger.error("Failed to download video file. Exiting.")
             sys.exit(1)
             

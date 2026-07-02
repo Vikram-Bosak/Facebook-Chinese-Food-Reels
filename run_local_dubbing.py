@@ -82,7 +82,7 @@ def main():
              if os.path.exists(output_dir): shutil.rmtree(output_dir)
              
              print("\n" + "="*50)
-             print("🎉 SUCCESS: Locally edited video saved successfully!")
+             print("SUCCESS: Locally edited video saved successfully!")
              print(f"File Path: {os.path.abspath(final_output)}")
              print("="*50 + "\n")
          else:

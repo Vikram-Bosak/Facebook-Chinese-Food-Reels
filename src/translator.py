@@ -569,7 +569,7 @@ def generate_english_tts(segments, output_audio_path=None, video_path=None):
                         '-i', silence_pad_path,
                         '-i', temp_seg_final,
                         '-filter_complex',
-                        f'[0:a]atrim=0:{silence_dur:.3f},apad[sil];[sil][1:a]concat=n=2:v=0:a=1[out]',
+                        f'[0:a]atrim=0:{silence_dur:.3f},asetpts=PTS-STARTPTS[sil];[sil][1:a]concat=n=2:v=0:a=1[out]',
                         '-map', '[out]',
                         temp_seg_padded
                     ], capture_output=True, check=True)
