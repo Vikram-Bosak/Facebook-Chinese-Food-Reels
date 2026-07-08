@@ -139,9 +139,14 @@ def fetch_bilibili_profile_videos(uid, max_videos=5):
             if result and 'entries' in result:
                 for entry in result['entries']:
                     if entry and entry.get('id'):
+                        # If title is empty, try to get it from the URL
+                        title = entry.get('title', '') or entry.get('fulltitle', '')
+                        if not title:
+                            # Extract title from URL pattern
+                            title = entry.get('url', entry.get('id', ''))
                         videos.append({
                             'bvid': entry['id'],
-                            'title': entry.get('title', ''),
+                            'title': title,
                             'url': entry.get('url', f"https://www.bilibili.com/video/{entry['id']}"),
                             'description': entry.get('description', ''),
                             'duration': entry.get('duration', '')
@@ -199,9 +204,9 @@ async def scan_curated_profiles():
 
         print(f"  Found {len(videos)} videos from {profile_name}")
 
-        # Small delay between profiles to avoid rate limiting
+        # Delay between profiles to avoid rate limiting
         import time
-        time.sleep(2)
+        time.sleep(5)
 
         for video in videos:
             bvid = video['bvid']
@@ -312,6 +317,51 @@ def run_downloader():
     # Return the first PENDING video in the queue if available
     queue = load_queue()
     pending = [item for item in queue if item['status'] == 'PENDING']
+
+    # If no pending videos from profiles, try YouTube search fallback
+    if not pending:
+        print("\nNo videos from curated profiles. Trying YouTube search fallback...")
+        history = load_history()
+        try:
+            import yt_dlp
+            search_queries = [
+                "chinese cooking process vertical short",
+                "chinese food making plating short",
+                "中式烹饪 竖版 short",
+            ]
+            for query in search_queries:
+                try:
+                    with yt_dlp.YoutubeDL({'quiet': True, 'no_warnings': True, 'extract_flat': True}) as ydl:
+                        result = ydl.extract_info(f"ytsearch5:{query}", download=False)
+                        if result and 'entries' in result:
+                            for entry in result['entries']:
+                                if entry and entry.get('id'):
+                                    vid_id = entry['id']
+                                    if vid_id in history or vid_id in {item['id'] for item in queue}:
+                                        continue
+                                    title = entry.get('title', '') or entry.get('fulltitle', '')
+                                    if not is_video_processable(title):
+                                        continue
+                                    new_item = {
+                                        "id": vid_id,
+                                        "title": title[:120],
+                                        "source_url": f"https://www.youtube.com/watch?v={vid_id}",
+                                        "profile_name": "YouTube Search",
+                                        "content_type": classify_video_content(title),
+                                        "status": "PENDING"
+                                    }
+                                    queue.append(new_item)
+                                    save_queue(queue)
+                                    pending.append(new_item)
+                                    print(f"  YouTube fallback: {title[:60]}")
+                                    break
+                except Exception as e:
+                    print(f"  YouTube search failed: {e}")
+                if pending:
+                    break
+        except Exception as e:
+            print(f"  YouTube fallback error: {e}")
+
     if pending:
         item = pending[0]
         print(f"\nNext pending video: {item['title']} ({item['source_url']})")
