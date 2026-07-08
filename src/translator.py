@@ -745,47 +745,8 @@ def merge_audio_with_video(video_path, audio_path, bg_music_path=None, output_pa
 
 
 
-def overlay_on_template_3_4(video_path, output_path):
-    """
-    Crops the input vertical video to the aspect ratio of the 3:4 frame content box,
-    scales it to 651x838, and overlays it onto the template assets/template_3_4.jpg
-    at coordinates x=57, y=109.
-    """
-    logger.info("Applying 3:4 template overlay to video...")
-    base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    template_path = os.path.join(base_dir, 'assets', 'template_3_4.jpg')
-    if not os.path.exists(template_path):
-        template_path = 'assets/template_3_4.jpg'
-        
-    if not os.path.exists(template_path):
-        logger.error(f"Template image not found at {template_path}. Skipping overlay.")
-        return video_path
-
-    try:
-        # We crop the vertical video dynamically to match the aspect ratio of the new content box (716x926),
-        # then scale it to 716x926, and overlay it on the template image (scaled to 746x1024) at 14:82
-        cmd = [
-            'ffmpeg', '-y',
-            '-i', template_path,
-            '-i', video_path,
-            '-filter_complex', '[0:v]scale=746:1024[tmp];[1:v]crop=iw:iw*926/716,scale=716:926[vid];[tmp][vid]overlay=14:82[outv]',
-            '-map', '[outv]',
-            '-map', '1:a',
-            '-c:v', 'libx264',
-            '-c:a', 'copy',
-            output_path
-        ]
-        
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
-        if result.returncode != 0:
-            logger.error(f"FFmpeg template overlay failed: {result.stderr}")
-            return video_path
-            
-        logger.info(f"Video successfully overlaid on template: {output_path}")
-        return output_path
-    except Exception as e:
-        logger.error(f"Error during template overlay: {e}")
-        return video_path
+# Template overlay system REMOVED — clean 9:16 fullscreen output only
+# Old function overlay_on_template_3_4() was here — deleted per user request
 
 
 def _format_srt_time(seconds):
@@ -875,13 +836,9 @@ def burn_subtitles_into_video(video_path, srt_path, output_path=None, language='
     logger.info(f"Burning {language} subtitles into video...")
 
     try:
-        # Adjust MarginV dynamically to place subtitles inside the video content box if template is present
-        base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-        template_path = os.path.join(base_dir, 'assets', 'template_3_4.jpg')
-        is_templated = os.path.exists(template_path) or os.path.exists('assets/template_3_4.jpg')
-        
-        margin_v = "30" if is_templated else "20"
-        margin_v_dual = "25" if is_templated else "15"
+        # Clean 9:16 output — no template, standard margins
+        margin_v = "20"
+        margin_v_dual = "15"
 
         # Subtitle style based on language
         if language == 'chinese':
@@ -999,12 +956,8 @@ def translate_video(video_path, output_dir=None, burn_subtitles=True, subtitle_l
             raise Exception("Failed to merge audio with video")
         temp_files.append(english_video)
 
-        # Apply 3:4 template overlay if template exists
-        template_video_path = os.path.join(output_dir, "video_english_3_4.mp4")
-        overlaid_video = overlay_on_template_3_4(english_video, template_video_path)
-        if overlaid_video != english_video:
-            english_video = overlaid_video
-            temp_files.append(english_video)
+        # Template overlay REMOVED — clean 9:16 fullscreen output only
+        # Old code: overlay_on_template_3_4(english_video, template_video_path)
 
         # Step 6: Generate subtitles
         logger.info("Step 6/6: Generating subtitles...")

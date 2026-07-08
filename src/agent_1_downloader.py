@@ -1,10 +1,22 @@
+"""
+Agent 1: Chinese Food Video Downloader
+
+Downloads Chinese food videos from CURATED PROFILES ONLY.
+- 10 specific Bilibili profiles that post cooking/serving content
+- Content filter: only cooking process and food serving/plating videos
+- NO tasting, eating, mukbang, or review videos
+"""
+
 import os
 import json
 import asyncio
 import sys
+import re
+import urllib.parse
+import requests
 from dotenv import load_dotenv
 
-# Prevent encoding crashes when printing Chinese characters to standard output
+# Prevent encoding crashes when printing Chinese characters
 try:
     sys.stdout.reconfigure(encoding='utf-8')
 except Exception:
@@ -20,15 +32,18 @@ try:
 except ImportError:
     from food_video_processor import classify_video_content, is_video_processable
 
+
 def load_history():
     if os.path.exists(HISTORY_FILE):
         with open(HISTORY_FILE, 'r') as f:
             return set(f.read().splitlines())
     return set()
 
+
 def save_to_history(video_id):
     with open(HISTORY_FILE, 'a') as f:
         f.write(f"{video_id}\n")
+
 
 def load_queue():
     if os.path.exists(QUEUE_FILE):
@@ -39,272 +54,255 @@ def load_queue():
             return []
     return []
 
+
 def save_queue(queue):
     os.makedirs(os.path.dirname(QUEUE_FILE), exist_ok=True)
     with open(QUEUE_FILE, 'w') as f:
         json.dump(queue, f, indent=2)
 
-async def scan_douyin_food_videos():
-    print("Scanning Douyin, Kuaishou, and Bilibili Food sections...")
-    history = load_history()
-    queue = load_queue()
-    queued_ids = {item['id'] for item in queue}
-    new_candidates = []
-    
-    # 1. Robust Bilibili API Fallback (Does not require Playwright)
-    import urllib.parse
-    import requests
-    import re
-    
+
+def load_curated_profiles():
+    """Load curated food profiles from JSON config."""
+    profiles_path = os.path.join(os.path.dirname(__file__), 'curated_profiles.json')
+    if not os.path.exists(profiles_path):
+        profiles_path = 'src/curated_profiles.json'
+    if not os.path.exists(profiles_path):
+        profiles_path = 'curated_profiles.json'
+
+    if os.path.exists(profiles_path):
+        try:
+            with open(profiles_path, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+                return data.get('profiles', [])
+        except Exception as e:
+            print(f"Error loading curated profiles: {e}")
+            return []
+    else:
+        print(f"WARNING: curated_profiles.json not found at {profiles_path}")
+        return []
+
+
+def fetch_bilibili_profile_videos(uid, max_videos=5):
+    """
+    Fetch latest videos from a Bilibili profile using their API.
+    Returns list of video dicts with bvid, title, url.
+    """
+    videos = []
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
         "Referer": "https://www.bilibili.com/"
     }
-    
-    # Chinese food-specific keywords: cooking, serving/plating, tasting
-    bilibili_kws = [
-        "做菜过程",         # Cooking process
-        "美食制作",         # Food making
-        "烹饪过程",         # Cooking process
-        "美食装盘",         # Food plating
-        "美食摆盘",         # Food plating/presentation
-        "美食上菜",         # Food serving
-        "中式烹饪",         # Chinese cooking
-        "家常菜做法",       # Home-style cooking
-        "街头美食制作",     # Street food making
-        "夜市美食",         # Night market food
-        "火锅制作",         # Hotpot making
-        "中餐大厨",         # Chinese chef
-    ]
-    for kw in bilibili_kws:
-        try:
-            url = f"https://api.bilibili.com/x/web-interface/wbi/search/all/v2?keyword={urllib.parse.quote(kw)}"
-            r = requests.get(url, headers=headers, timeout=10)
-            if r.status_code == 200:
-                data = r.json()
-                if data.get('code') == 0:
-                    result = data.get('data', {}).get('result', [])
-                    video_result = None
-                    if isinstance(result, list):
-                        for item in result:
-                            if isinstance(item, dict) and item.get('result_type') == 'video':
-                                video_result = item
-                                break
-                    elif isinstance(result, dict):
-                        video_result = result.get('video')
-                        
-                    if video_result:
-                        data_list = video_result.get('data', [])
-                        for v in data_list:
-                            bvid = v.get('bvid')
-                            if not bvid:
-                                continue
-                            if bvid in history or bvid in queued_ids:
-                                continue
-                            
-                            title_clean = re.sub(r'<[^>]+>', '', v.get('title', ''))
-                            # CONTENT FILTER: only cooking/serving videos allowed
-                            if not is_video_processable(title_clean):
-                                print(f"REJECTED (not cooking/serving): {title_clean[:60]}")
-                                continue
-                            video_url = f"https://www.bilibili.com/video/{bvid}"
-                            new_candidates.append({
-                                "id": bvid,
-                                "title": title_clean[:120],
-                                "source_url": video_url,
-                                "status": "PENDING"
-                            })
-                            print(f"Discovered Bilibili food video: ID={bvid} | Title={title_clean[:50]}")
-        except Exception as e:
-            print(f"Error scanning Bilibili API: {e}")
 
-    # 2. Playwright Scraper for Douyin, Kuaishou, and Bilibili (runs on GitHub Actions or policy-free environments)
     try:
-        from playwright.async_api import async_playwright
-        
-        target_urls = [
-            "https://www.douyin.com/jingxuan",
-            "https://www.kuaishou.com/new-reco",
-            "https://www.bilibili.com/"
-        ]
-        
-        async with async_playwright() as p:
-            browser = await p.chromium.launch(headless=True)
-            context = await browser.new_context(
-                user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-                viewport={'width': 1280, 'height': 800}
-            )
-            page = await context.new_page()
-            
-            for target_url in target_urls:
-                try:
-                    print(f"Playwright scraping: {target_url}")
-                    await page.goto(target_url, wait_until="domcontentloaded", timeout=60000)
-                    await page.wait_for_timeout(5000)
-                    
-                    # Douyin / Kuaishou card extraction
-                    if "douyin.com" in target_url:
-                        cards = await page.query_selector_all('[data-aweme-id]')
-                        for card in cards:
-                            aweme_id = await card.get_attribute('data-aweme-id')
-                            if aweme_id and aweme_id not in history and aweme_id not in queued_ids:
-                                text = await card.inner_text()
-                                text_cleaned = ' '.join(text.split())
-                                # Chinese food-specific keywords for Douyin
-                                keywords = [
-                                    "做菜", "烹饪", "炒菜", "煮饭", "做饭",   # Cooking
-                                    "美食", "好吃", "味道", "口感",           # Food
-                                    "装盘", "摆盘", "上菜", "出品",           # Plating/Serving
-                                    "试吃", "品尝", "吃播", "测评",           # Tasting
-                                    "家常菜", "中餐", "火锅", "烧烤",         # Chinese food types
-                                    "街头小吃", "夜市", "大排档",             # Street food
-                                    "大厨", "厨师", "厨房",                   # Chef/Kitchen
-                                ]
-                                if any(kw in text_cleaned for kw in keywords):
-                                    # CONTENT FILTER: only cooking/serving videos allowed
-                                    if not is_video_processable(text_cleaned):
-                                        print(f"REJECTED (not cooking/serving): {text_cleaned[:60]}")
-                                        continue
-                                    new_candidates.append({
-                                        "id": aweme_id,
-                                        "title": text_cleaned[:120],
-                                        "source_url": f"https://www.douyin.com/video/{aweme_id}",
-                                        "status": "PENDING"
-                                    })
-                                    print(f"Discovered Douyin video: ID={aweme_id} | Title={text_cleaned[:50]}")
-                                    
-                    elif "kuaishou.com" in target_url:
-                        # Extract links containing short-video or Kwai video patterns
-                        links = await page.query_selector_all('a')
-                        for link in links:
-                            href = await link.get_attribute('href')
-                            if href and ('/short-video/' in href or '/video/' in href or '/f/' in href):
-                                vid = href.split('/')[-1].split('?')[0]
-                                if vid and vid not in history and vid not in queued_ids:
-                                    text = await link.inner_text()
-                                    text_cleaned = ' '.join(text.split())
-                                    # CONTENT FILTER: only cooking/serving videos allowed
-                                    if not is_video_processable(text_cleaned):
-                                        print(f"REJECTED (not cooking/serving): {text_cleaned[:60]}")
-                                        continue
-                                    new_candidates.append({
-                                        "id": vid,
-                                        "title": text_cleaned[:120] if text_cleaned else f"Kuaishou Video {vid}",
-                                        "source_url": f"https://www.kuaishou.com/short-video/{vid}" if not href.startswith('http') else href,
-                                        "status": "PENDING"
-                                    })
-                                    print(f"Discovered Kuaishou video: ID={vid}")
-                                    
-                except Exception as e:
-                    print(f"Error scraping {target_url} with Playwright: {e}")
-            await browser.close()
-            
-    except Exception as err:
-        print(f"Playwright scraper skipped/failed: {err}")
+        # Fetch user's video list from Bilibili API
+        api_url = f"https://api.bilibili.com/x/space/wbi/arc/search?mid={uid}&ps={max_videos}&pn=1&order=pubdate"
+        r = requests.get(api_url, headers=headers, timeout=15)
+        data = r.json()
+
+        if data.get('code') != 0:
+            # Try alternative API endpoint
+            api_url = f"https://api.bilibili.com/x/space/arc/search?mid={uid}&ps={max_videos}&pn=1&order=pubdate"
+            r = requests.get(api_url, headers=headers, timeout=15)
+            data = r.json()
+
+        if data.get('code') == 0:
+            vlist = data.get('data', {}).get('list', {}).get('vlist', [])
+            for v in vlist:
+                bvid = v.get('bvid', '')
+                title = v.get('title', '')
+                if bvid and title:
+                    videos.append({
+                        'bvid': bvid,
+                        'title': title,
+                        'url': f"https://www.bilibili.com/video/{bvid}",
+                        'description': v.get('description', ''),
+                        'duration': v.get('length', '')
+                    })
+        else:
+            print(f"  API error for UID {uid}: {data.get('message', 'unknown')}")
+
+    except Exception as e:
+        print(f"  Error fetching profile {uid}: {e}")
+
+    return videos
+
+
+async def scan_curated_profiles():
+    """
+    Scan ONLY curated food profiles for new cooking/serving videos.
+    No random search — only specific profiles.
+    """
+    print("=" * 60)
+    print("SCANNING CURATED FOOD PROFILES (Cooking/Serving Only)")
+    print("=" * 60)
+
+    profiles = load_curated_profiles()
+    if not profiles:
+        print("ERROR: No curated profiles found! Add profiles to src/curated_profiles.json")
+        return
+
+    print(f"Found {len(profiles)} curated profiles to scan")
+
+    history = load_history()
+    queue = load_queue()
+    queued_ids = {item['id'] for item in queue}
+    new_candidates = []
+
+    for profile in profiles:
+        profile_name = profile.get('name', profile.get('name_en', 'Unknown'))
+        uid = profile.get('uid', '')
+        platform = profile.get('platform', 'bilibili')
+        content_type = profile.get('content_type', 'cooking')
+
+        print(f"\n--- Scanning: {profile_name} ({platform}) ---")
+
+        if not uid:
+            print(f"  SKIP: No UID for {profile_name}")
+            continue
+
+        # Fetch latest videos from this profile
+        if platform == 'bilibili':
+            videos = fetch_bilibili_profile_videos(uid, max_videos=5)
+        else:
+            print(f"  SKIP: Platform '{platform}' not supported yet")
+            continue
+
+        if not videos:
+            print(f"  No videos found for {profile_name}")
+            continue
+
+        print(f"  Found {len(videos)} videos from {profile_name}")
+
+        for video in videos:
+            bvid = video['bvid']
+            title = video['title']
+
+            # Skip if already processed
+            if bvid in history or bvid in queued_ids:
+                continue
+
+            # CONTENT FILTER: only cooking/serving videos allowed
+            if not is_video_processable(title, video.get('description', '')):
+                print(f"  REJECTED (not cooking/serving): {title[:60]}")
+                continue
+
+            # Classify content type
+            content = classify_video_content(title, video.get('description', ''))
+            print(f"  ✅ ACCEPTED ({content}): {title[:60]}")
+
+            new_candidates.append({
+                "id": bvid,
+                "title": title[:120],
+                "source_url": video['url'],
+                "profile_name": profile_name,
+                "profile_uid": uid,
+                "content_type": content,
+                "status": "PENDING"
+            })
+            queued_ids.add(bvid)
 
     # Save unique new candidates to queue
     if new_candidates:
-        unique_candidates = []
-        seen_ids = set(queued_ids)
-        for c in new_candidates:
-            if c['id'] not in seen_ids:
-                unique_candidates.append(c)
-                seen_ids.add(c['id'])
-                
-        if unique_candidates:
-            queue.extend(unique_candidates)
-            save_queue(queue)
-            print(f"Added {len(unique_candidates)} new videos to the queue.")
-        else:
-            print("No new unique food videos discovered in this scan.")
+        queue.extend(new_candidates)
+        save_queue(queue)
+        print(f"\n{'=' * 60}")
+        print(f"Added {len(new_candidates)} new cooking/serving videos to queue")
+        print(f"{'=' * 60}")
     else:
-        print("No new unique food videos discovered in this scan.")
+        print(f"\n{'=' * 60}")
+        print("No new cooking/serving videos found in this scan")
+        print(f"{'=' * 60}")
+
 
 def scan_rss_feed():
+    """Read local RSS feed (if available)."""
     print("Reading local RSS feed...")
     FEED_FILE = 'workspace/reels_feed.xml'
     if not os.path.exists(FEED_FILE):
-        print(f"Local RSS feed not found at {FEED_FILE}. Please run rss_generator.py first.")
+        print(f"Local RSS feed not found at {FEED_FILE}. Skipping.")
         return
-        
+
     try:
         import xml.etree.ElementTree as ET
         history = load_history()
         queue = load_queue()
         queued_ids = {item['id'] for item in queue}
-        
+
         tree = ET.parse(FEED_FILE)
         root = tree.getroot()
-        
+
         new_candidates = []
         for item in root.findall('.//item'):
             title_node = item.find('title')
             link_node = item.find('link')
             guid_node = item.find('guid')
-            
+
             if title_node is not None and link_node is not None and guid_node is not None:
                 vid = guid_node.text
                 if vid not in history and vid not in queued_ids:
-                    # CONTENT FILTER: only cooking/serving videos allowed
                     rss_title = title_node.text or ""
+                    # CONTENT FILTER: only cooking/serving videos allowed
                     if not is_video_processable(rss_title):
                         print(f"REJECTED (not cooking/serving): {rss_title[:60]}")
                         continue
                     new_candidates.append({
                         "id": vid,
-                        "title": title_node.text,
+                        "title": rss_title,
                         "source_url": link_node.text,
                         "status": "PENDING"
                     })
-                    print(f"RSS Feed Match: ID={vid} | Title={title_node.text[:50]}")
-                    
+                    print(f"RSS Feed Match: ID={vid} | Title={rss_title[:50]}")
+
         if new_candidates:
             queue.extend(new_candidates)
             save_queue(queue)
-            print(f"Added {len(new_candidates)} new videos from RSS feed to the queue.")
+            print(f"Added {len(new_candidates)} new videos from RSS feed to queue.")
         else:
             print("No new unique videos found in the RSS feed.")
     except Exception as e:
         print(f"Error parsing local RSS feed: {e}")
 
+
 def run_downloader():
-    print("Running Downloader: Scanning and filling queue...")
+    """Main downloader: scan curated profiles + RSS feed."""
+    print("\n" + "=" * 60)
+    print("CHINESE FOOD VIDEO DOWNLOADER")
+    print("Source: Curated Profiles Only (Cooking/Serving)")
+    print("=" * 60)
+
     # First parse from RSS feed if available
     scan_rss_feed()
-    
-    # Also attempt standard scraper scan in background
+
+    # Scan curated profiles (main source)
     try:
-        asyncio.run(scan_douyin_food_videos())
-    except Exception:
-        pass
-    
+        asyncio.run(scan_curated_profiles())
+    except Exception as e:
+        print(f"Profile scan error: {e}")
+
     # Return the first PENDING video in the queue if available
     queue = load_queue()
     pending = [item for item in queue if item['status'] == 'PENDING']
     if pending:
-        # Return first pending item metadata
         item = pending[0]
-        print(f"Next pending video: {item['title']} ({item['source_url']})")
-        
+        print(f"\nNext pending video: {item['title']} ({item['source_url']})")
+
         # Add local_path for the editor
         item['local_path'] = "workspace/raw_video.mp4"
         item['original_file'] = f"{item['id']}.mp4"
-        
-        # Download the video if not already downloaded
+
+        # Download the video
         import yt_dlp
-        import requests
-        import re
-        
+
         workspace_dir = "workspace"
         os.makedirs(workspace_dir, exist_ok=True)
         raw_video = os.path.join(workspace_dir, "raw_video.mp4")
-        
-        # Always download fresh - remove old file
+
+        # Always download fresh
         if os.path.exists(raw_video):
             os.remove(raw_video)
-        
+
         print(f"Downloading video: {item['source_url']}")
-        
+
         # Try Bilibili direct download first
         download_success = False
         if "bilibili.com" in item['source_url'] or "b23.tv" in item['source_url']:
@@ -335,7 +333,7 @@ def run_downloader():
                                 print(f"Bilibili download successful: {raw_video}")
                 except Exception as e:
                     print(f"Bilibili direct download failed: {e}")
-            
+
         # Fallback to yt-dlp
         if not download_success:
             try:
@@ -353,56 +351,18 @@ def run_downloader():
                     print(f"yt-dlp download successful: {raw_video}")
             except Exception as e:
                 print(f"yt-dlp download failed: {e}")
-        
-        if not download_success:
-            print(f"Failed to download video from Bilibili: {item['source_url']}")
-            # Try YouTube as fallback
-            print("Trying YouTube as fallback...")
-            try:
-                ydl_opts = {
-                    'outtmpl': raw_video,
-                    'format': 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best',
-                    'merge_output_format': 'mp4',
-                    'quiet': True,
-                    'no_warnings': True,
-                }
-                # If source is Bilibili, search YouTube for similar content
-                if "bilibili.com" in item['source_url']:
-                    search_query = "chinese cooking food making vertical short"
-                    with yt_dlp.YoutubeDL({'quiet': True, 'no_warnings': True, 'extract_flat': True}) as ydl:
-                        result = ydl.extract_info(f'ytsearch3:{search_query}', download=False)
-                        if result and 'entries' in result:
-                            for entry in result['entries']:
-                                yt_url = f"https://www.youtube.com/watch?v={entry['id']}"
-                                try:
-                                    with yt_dlp.YoutubeDL(ydl_opts) as ydl2:
-                                        ydl2.download([yt_url])
-                                    if os.path.exists(raw_video) and os.path.getsize(raw_video) > 1000:
-                                        download_success = True
-                                        item['source_url'] = yt_url
-                                        print(f"YouTube download successful: {raw_video}")
-                                        break
-                                except Exception as e2:
-                                    print(f"YouTube download failed for {yt_url}: {e2}")
-                else:
-                    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                        ydl.download([item['source_url']])
-                    if os.path.exists(raw_video) and os.path.getsize(raw_video) > 1000:
-                        download_success = True
-                        print(f"yt-dlp download successful: {raw_video}")
-            except Exception as e:
-                print(f"YouTube fallback failed: {e}")
-        
+
         if not download_success:
             print(f"Failed to download video: {item['source_url']}")
             return None
-        
+
         # Mark as processing in queue
         item['status'] = 'PROCESSING'
         save_queue(queue)
-        
+
         return item
     return None
+
 
 if __name__ == "__main__":
     run_downloader()

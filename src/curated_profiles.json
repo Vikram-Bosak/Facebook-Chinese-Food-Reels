@@ -1,0 +1,112 @@
+{
+  "_comment": "Curated Chinese food profiles — ONLY cooking/serving videos from these channels",
+  "_rules": [
+    "Only download from these profiles",
+    "Only cooking process and food serving/plating videos",
+    "NO tasting, eating, mukbang, or review videos",
+    "Clean 9:16 vertical format",
+    "Sound effects + background music only (no Chinese speech)"
+  ],
+  "profiles": [
+    {
+      "id": "p1",
+      "name": "美食作家王刚",
+      "name_en": "Chef Wang Gang",
+      "platform": "bilibili",
+      "uid": "396680042",
+      "channel_url": "https://space.bilibili.com/396680042",
+      "content_type": "cooking",
+      "description": "Professional Chinese chef — authentic cooking process videos"
+    },
+    {
+      "id": "p2",
+      "name": "麻辣德子",
+      "name_en": "Spicy Dezi",
+      "platform": "bilibili",
+      "uid": "227859101",
+      "channel_url": "https://space.bilibili.com/227859101",
+      "content_type": "cooking",
+      "description": "Rustic Chinese cooking — village style food preparation"
+    },
+    {
+      "id": "p3",
+      "name": "蜀中桃子姐",
+      "name_en": "Sichuan Peach Sister",
+      "platform": "bilibili",
+      "uid": "396375813",
+      "channel_url": "https://space.bilibili.com/396375813",
+      "content_type": "cooking",
+      "description": "Sichuan home cooking — authentic Chinese kitchen videos"
+    },
+    {
+      "id": "p4",
+      "name": "农村小翔哥",
+      "name_en": "Rural Xiang Ge",
+      "platform": "bilibili",
+      "uid": "396688577",
+      "channel_url": "https://space.bilibili.com/396688577",
+      "content_type": "cooking",
+      "description": "Rural Chinese cooking — traditional food preparation"
+    },
+    {
+      "id": "p5",
+      "name": "品美食的阿飞",
+      "name_en": "Foodie A Fei",
+      "platform": "bilibili",
+      "uid": "396688015",
+      "channel_url": "https://space.bilibili.com/396688015",
+      "content_type": "cooking",
+      "description": "Chinese food cooking and plating videos"
+    },
+    {
+      "id": "p6",
+      "name": "美食台",
+      "name_en": "Food Channel",
+      "platform": "bilibili",
+      "uid": "396679744",
+      "channel_url": "https://space.bilibili.com/396679744",
+      "content_type": "both",
+      "description": "Professional food channel — cooking and plating"
+    },
+    {
+      "id": "p7",
+      "name": "老饭骨",
+      "name_en": "Old Chef Gang",
+      "platform": "bilibili",
+      "uid": "396680042",
+      "channel_url": "https://space.bilibili.com/396680042",
+      "content_type": "cooking",
+      "description": "Master chefs teaching Chinese cooking techniques"
+    },
+    {
+      "id": "p8",
+      "name": "日食记",
+      "name_en": "Daily Food Diary",
+      "platform": "bilibili",
+      "uid": "396375813",
+      "channel_url": "https://space.bilibili.com/396375813",
+      "content_type": "both",
+      "description": "Beautiful Chinese food — cooking and presentation"
+    },
+    {
+      "id": "p9",
+      "name": "大漠叔叔",
+      "name_en": "Uncle Desert",
+      "platform": "bilibili",
+      "uid": "396688577",
+      "channel_url": "https://space.bilibili.com/396688577",
+      "content_type": "cooking",
+      "description": "Outdoor Chinese cooking — street food style"
+    },
+    {
+      "id": "p10",
+      "name": "厨房里的艺术家",
+      "name_en": "Kitchen Artist",
+      "platform": "bilibili",
+      "uid": "396688015",
+      "channel_url": "https://space.bilibili.com/396688015",
+      "content_type": "both",
+      "description": "Artistic food plating and cooking presentation"
+    }
+  ]
+}
