@@ -84,7 +84,8 @@ def load_curated_profiles():
 
 def fetch_bilibili_profile_videos(uid, max_videos=5):
     """
-    Fetch latest videos from a Bilibili profile using their API.
+    Fetch latest videos from a Bilibili profile.
+    Tries Bilibili API first, falls back to yt-dlp for profile scanning.
     Returns list of video dicts with bvid, title, url.
     """
     videos = []
@@ -93,17 +94,11 @@ def fetch_bilibili_profile_videos(uid, max_videos=5):
         "Referer": "https://www.bilibili.com/"
     }
 
+    # Method 1: Bilibili API
     try:
-        # Fetch user's video list from Bilibili API
-        api_url = f"https://api.bilibili.com/x/space/wbi/arc/search?mid={uid}&ps={max_videos}&pn=1&order=pubdate"
+        api_url = f"https://api.bilibili.com/x/space/arc/search?mid={uid}&ps={max_videos}&pn=1&order=pubdate"
         r = requests.get(api_url, headers=headers, timeout=15)
         data = r.json()
-
-        if data.get('code') != 0:
-            # Try alternative API endpoint
-            api_url = f"https://api.bilibili.com/x/space/arc/search?mid={uid}&ps={max_videos}&pn=1&order=pubdate"
-            r = requests.get(api_url, headers=headers, timeout=15)
-            data = r.json()
 
         if data.get('code') == 0:
             vlist = data.get('data', {}).get('list', {}).get('vlist', [])
@@ -118,11 +113,42 @@ def fetch_bilibili_profile_videos(uid, max_videos=5):
                         'description': v.get('description', ''),
                         'duration': v.get('length', '')
                     })
+            if videos:
+                return videos
         else:
             print(f"  API error for UID {uid}: {data.get('message', 'unknown')}")
 
     except Exception as e:
-        print(f"  Error fetching profile {uid}: {e}")
+        print(f"  Bilibili API error for {uid}: {e}")
+
+    # Method 2: yt-dlp fallback (more reliable, handles rate limiting)
+    try:
+        import yt_dlp
+        channel_url = f"https://space.bilibili.com/{uid}/video"
+        print(f"  Trying yt-dlp fallback for UID {uid}...")
+
+        ydl_opts = {
+            'quiet': True,
+            'no_warnings': True,
+            'extract_flat': True,
+            'playlistend': max_videos,
+        }
+
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            result = ydl.extract_info(channel_url, download=False)
+            if result and 'entries' in result:
+                for entry in result['entries']:
+                    if entry and entry.get('id'):
+                        videos.append({
+                            'bvid': entry['id'],
+                            'title': entry.get('title', ''),
+                            'url': entry.get('url', f"https://www.bilibili.com/video/{entry['id']}"),
+                            'description': entry.get('description', ''),
+                            'duration': entry.get('duration', '')
+                        })
+
+    except Exception as e:
+        print(f"  yt-dlp fallback failed for UID {uid}: {e}")
 
     return videos
 
@@ -172,6 +198,10 @@ async def scan_curated_profiles():
             continue
 
         print(f"  Found {len(videos)} videos from {profile_name}")
+
+        # Small delay between profiles to avoid rate limiting
+        import time
+        time.sleep(2)
 
         for video in videos:
             bvid = video['bvid']
