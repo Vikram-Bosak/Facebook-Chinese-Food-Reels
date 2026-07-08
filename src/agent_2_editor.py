@@ -2,9 +2,10 @@
 Agent 2: Food Video Editor
 
 Processes Chinese food videos by:
-1. Removing Chinese speech segments (keeping cooking/serving parts)
-2. Removing any templates, overlays, or frames
-3. Ensuring clean 9:16 vertical fullscreen format
+1. Validating content type (only cooking/serving allowed)
+2. Removing Chinese speech segments (keeping cooking/serving parts)
+3. Removing any templates, overlays, or frames
+4. Ensuring clean 9:16 vertical fullscreen format
 
 No AI headline generation, no overlay images, no templates.
 """
@@ -14,15 +15,15 @@ import sys
 
 try:
     from .logger import logger
-    from .food_video_processor import process_food_video, get_video_info
+    from .food_video_processor import process_food_video, get_video_info, classify_video_content
 except ImportError:
     from logger import logger
-    from food_video_processor import process_food_video, get_video_info
+    from food_video_processor import process_food_video, get_video_info, classify_video_content
 
 
 def process_video(video_data):
     """
-    Process a food video: remove Chinese speech parts, ensure 9:16 format.
+    Process a food video: validate content, remove Chinese speech, ensure 9:16 format.
 
     Args:
         video_data: Dict with 'local_path', 'id', 'title', etc.
@@ -42,7 +43,18 @@ def process_video(video_data):
         video_data["editing_status"] = "Failed"
         return video_data
 
-    print(f"Processing food video: {title}")
+    # === CONTENT VALIDATION: Only cooking/serving videos allowed ===
+    print(f"Validating content type: {title[:80]}")
+    content_type = classify_video_content(title)
+
+    if content_type not in ('cooking', 'serving'):
+        print(f"❌ REJECTED: Video classified as '{content_type}' (only cooking/serving allowed)")
+        print(f"   Title: {title[:80]}")
+        video_data["editing_status"] = "Rejected"
+        video_data["reject_reason"] = f"Content type '{content_type}' not allowed (only cooking/serving)"
+        return video_data
+
+    print(f"✅ Content type: {content_type} — processing...")
 
     # Get video info first
     info = get_video_info(raw_video_path)

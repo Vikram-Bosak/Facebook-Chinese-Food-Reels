@@ -11,8 +11,9 @@ Pipeline:
 7. Output clean fullscreen vertical video
 
 Key rules:
+- ONLY cooking/serving videos are processed (NO tasting/eating/mukbang)
 - REMOVE any part where Chinese language is spoken
-- KEEP cooking, food serving/plating, and (optionally) food tasting parts
+- KEEP cooking, food serving/plating segments
 - NO templates, frames, or overlays on final video
 - Final output MUST be 9:16 vertical format
 """
@@ -22,11 +23,117 @@ import subprocess
 import json
 import tempfile
 import math
+import re
 
 try:
     from .logger import logger
 except ImportError:
     from logger import logger
+
+
+# ============================================================
+# CONTENT CLASSIFIER — Only Cooking & Serving Allowed
+# ============================================================
+
+# Keywords that indicate COOKING / MAKING food
+COOKING_KEYWORDS_ZH = [
+    "做菜", "做饭", "烹饪", "炒菜", "煮", "蒸", "炸", "烤", "煎",
+    "切菜", "备菜", "准备食材", "下锅", "翻炒", "大火", "小火",
+    "中火", "爆炒", "红烧", "炖", "焖", "卤", "腌", "拌",
+    "和面", "揉面", "擀面", "包饺子", "包包子", "做面条",
+    "热锅", "凉油", "烧水", "焯水", "过油", "滑油",
+    "出锅", "盛菜", "装盘", "摆盘", "出品", "上菜",
+    "厨房", "灶台", "铁锅", "炒锅", "蒸锅",
+    # Food types that imply cooking
+    "家常菜", "中餐", "川菜", "湘菜", "粤菜", "鲁菜",
+    "火锅制作", "烧烤制作", "夜市", "大排档", "街头小吃",
+]
+
+# Keywords that indicate SERVING / PLATING food
+SERVING_KEYWORDS_ZH = [
+    "装盘", "摆盘", "上菜", "出品", "端菜", "上桌",
+    "盘子", "碗", "餐具", "摆设", "呈现",
+    "serve", "plating", "serving", "presentation",
+]
+
+# Keywords that indicate TASTING / EATING (REJECT these)
+TASTING_KEYWORDS_ZH = [
+    "试吃", "品尝", "吃播", "大胃王", "食量", "吃播挑战",
+    "测评", "点评", "评价", "口感", "味道怎么样", "好吃吗",
+    "挑战", "比赛", "pk", "对决",
+    "吃", "吞", "嚼", "咬", "舔",
+    "mukbang", "eating", "taste", "review", "challenge",
+    "干饭", "光盘", "空盘", "再来一碗",
+]
+
+
+def classify_video_content(title, description=""):
+    """
+    Classify a Chinese food video by content type.
+
+    Returns:
+        'cooking'  — Video shows cooking/making food → ACCEPT
+        'serving'  — Video shows plating/serving food → ACCEPT
+        'tasting'  — Video shows eating/tasting/review → REJECT
+        'unknown'  — Cannot determine → REJECT (safe default)
+
+    Logic:
+    - If title matches cooking keywords → 'cooking'
+    - If title matches serving keywords → 'serving'
+    - If title matches tasting keywords → 'tasting' (REJECT)
+    - If no match → 'unknown' (REJECT)
+    """
+    text = f"{title} {description}".lower().strip()
+
+    if not text:
+        logger.info("Content classifier: No title/description, classifying as 'unknown'")
+        return 'unknown'
+
+    # Score each category
+    cooking_score = 0
+    serving_score = 0
+    tasting_score = 0
+
+    for kw in COOKING_KEYWORDS_ZH:
+        if kw in text:
+            cooking_score += 1
+
+    for kw in SERVING_KEYWORDS_ZH:
+        if kw in text:
+            serving_score += 1
+
+    for kw in TASTING_KEYWORDS_ZH:
+        if kw in text:
+            tasting_score += 1
+
+    logger.info(f"Content classification scores — Cooking: {cooking_score}, Serving: {serving_score}, Tasting: {tasting_score}")
+
+    # Decision logic
+    if tasting_score > 0 and cooking_score == 0 and serving_score == 0:
+        # Pure tasting/eating video → REJECT
+        logger.info("Content classifier: REJECTED (tasting/eating only)")
+        return 'tasting'
+
+    if cooking_score > 0:
+        logger.info("Content classifier: ACCEPTED as 'cooking'")
+        return 'cooking'
+
+    if serving_score > 0:
+        logger.info("Content classifier: ACCEPTED as 'serving'")
+        return 'serving'
+
+    # No clear signal → REJECT (safe default: only process confirmed cooking/serving)
+    logger.info("Content classifier: REJECTED (cannot confirm cooking/serving content)")
+    return 'unknown'
+
+
+def is_video_processable(title, description=""):
+    """
+    Quick check: should this video be downloaded and processed?
+    Only returns True for cooking and serving videos.
+    """
+    content_type = classify_video_content(title, description)
+    return content_type in ('cooking', 'serving')
 
 
 # ============================================================

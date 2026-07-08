@@ -14,6 +14,12 @@ load_dotenv()
 HISTORY_FILE = 'downloaded_history.txt'
 QUEUE_FILE = 'workspace/queue.json'
 
+# Content classifier: only cooking/serving videos allowed
+try:
+    from .food_video_processor import classify_video_content, is_video_processable
+except ImportError:
+    from food_video_processor import classify_video_content, is_video_processable
+
 def load_history():
     if os.path.exists(HISTORY_FILE):
         with open(HISTORY_FILE, 'r') as f:
@@ -97,6 +103,10 @@ async def scan_douyin_food_videos():
                                 continue
                             
                             title_clean = re.sub(r'<[^>]+>', '', v.get('title', ''))
+                            # CONTENT FILTER: only cooking/serving videos allowed
+                            if not is_video_processable(title_clean):
+                                print(f"REJECTED (not cooking/serving): {title_clean[:60]}")
+                                continue
                             video_url = f"https://www.bilibili.com/video/{bvid}"
                             new_candidates.append({
                                 "id": bvid,
@@ -151,6 +161,10 @@ async def scan_douyin_food_videos():
                                     "大厨", "厨师", "厨房",                   # Chef/Kitchen
                                 ]
                                 if any(kw in text_cleaned for kw in keywords):
+                                    # CONTENT FILTER: only cooking/serving videos allowed
+                                    if not is_video_processable(text_cleaned):
+                                        print(f"REJECTED (not cooking/serving): {text_cleaned[:60]}")
+                                        continue
                                     new_candidates.append({
                                         "id": aweme_id,
                                         "title": text_cleaned[:120],
@@ -169,6 +183,10 @@ async def scan_douyin_food_videos():
                                 if vid and vid not in history and vid not in queued_ids:
                                     text = await link.inner_text()
                                     text_cleaned = ' '.join(text.split())
+                                    # CONTENT FILTER: only cooking/serving videos allowed
+                                    if not is_video_processable(text_cleaned):
+                                        print(f"REJECTED (not cooking/serving): {text_cleaned[:60]}")
+                                        continue
                                     new_candidates.append({
                                         "id": vid,
                                         "title": text_cleaned[:120] if text_cleaned else f"Kuaishou Video {vid}",
@@ -227,6 +245,11 @@ def scan_rss_feed():
             if title_node is not None and link_node is not None and guid_node is not None:
                 vid = guid_node.text
                 if vid not in history and vid not in queued_ids:
+                    # CONTENT FILTER: only cooking/serving videos allowed
+                    rss_title = title_node.text or ""
+                    if not is_video_processable(rss_title):
+                        print(f"REJECTED (not cooking/serving): {rss_title[:60]}")
+                        continue
                     new_candidates.append({
                         "id": vid,
                         "title": title_node.text,
