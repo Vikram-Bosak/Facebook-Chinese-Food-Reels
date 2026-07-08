@@ -8,10 +8,7 @@ python-dotenv
 cloudscraper
 beautifulsoup4
 python-telegram-bot
-Pillow
 yt-dlp
 playwright
-# Translation dependencies
-edge-tts
+# Food video processing (Whisper for speech detection)
 openai-whisper
-soundfile

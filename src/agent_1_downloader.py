@@ -55,7 +55,21 @@ async def scan_douyin_food_videos():
         "Referer": "https://www.bilibili.com/"
     }
     
-    bilibili_kws = ["美食测评", "美食挑战", "做菜教程"]
+    # Chinese food-specific keywords: cooking, serving/plating, tasting
+    bilibili_kws = [
+        "做菜过程",         # Cooking process
+        "美食制作",         # Food making
+        "烹饪过程",         # Cooking process
+        "美食装盘",         # Food plating
+        "美食摆盘",         # Food plating/presentation
+        "美食上菜",         # Food serving
+        "中式烹饪",         # Chinese cooking
+        "家常菜做法",       # Home-style cooking
+        "街头美食制作",     # Street food making
+        "夜市美食",         # Night market food
+        "火锅制作",         # Hotpot making
+        "中餐大厨",         # Chinese chef
+    ]
     for kw in bilibili_kws:
         try:
             url = f"https://api.bilibili.com/x/web-interface/wbi/search/all/v2?keyword={urllib.parse.quote(kw)}"
@@ -126,7 +140,16 @@ async def scan_douyin_food_videos():
                             if aweme_id and aweme_id not in history and aweme_id not in queued_ids:
                                 text = await card.inner_text()
                                 text_cleaned = ' '.join(text.split())
-                                keywords = ["测评", "试吃", "吃播", "评价", "点评", "体验", "口味", "挑战", "比赛", "大胃王", "pk", "教程", "配方", "做法", "步骤", "做菜", "烹饪", "食谱"]
+                                # Chinese food-specific keywords for Douyin
+                                keywords = [
+                                    "做菜", "烹饪", "炒菜", "煮饭", "做饭",   # Cooking
+                                    "美食", "好吃", "味道", "口感",           # Food
+                                    "装盘", "摆盘", "上菜", "出品",           # Plating/Serving
+                                    "试吃", "品尝", "吃播", "测评",           # Tasting
+                                    "家常菜", "中餐", "火锅", "烧烤",         # Chinese food types
+                                    "街头小吃", "夜市", "大排档",             # Street food
+                                    "大厨", "厨师", "厨房",                   # Chef/Kitchen
+                                ]
                                 if any(kw in text_cleaned for kw in keywords):
                                     new_candidates.append({
                                         "id": aweme_id,
@@ -322,7 +345,7 @@ def run_downloader():
                 }
                 # If source is Bilibili, search YouTube for similar content
                 if "bilibili.com" in item['source_url']:
-                    search_query = "chinese food cooking short"
+                    search_query = "chinese cooking food making vertical short"
                     with yt_dlp.YoutubeDL({'quiet': True, 'no_warnings': True, 'extract_flat': True}) as ydl:
                         result = ydl.extract_info(f'ytsearch3:{search_query}', download=False)
                         if result and 'entries' in result:
